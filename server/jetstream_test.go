@@ -27348,3 +27348,19 @@ func TestJetStreamInterestCheckWithoutConsumersDoesNotCompact(t *testing.T) {
 	require_Equal(t, state.FirstSeq, 1)
 	require_Equal(t, state.LastSeq, numMsgs)
 }
+
+func TestJetStreamCreateStreamAfterDeletingLastStream(t *testing.T) {
+	s := RunBasicJetStreamServer(t)
+	defer s.Shutdown()
+
+	nc, js := jsClientConnect(t, s)
+	defer nc.Close()
+
+	// Deleting the account's last stream starts a goroutine to remove the
+	// emptied directories, which must not fail the next create.
+	for i := 0; i < 3000; i++ {
+		_, err := js.AddStream(&nats.StreamConfig{Name: "A", Subjects: []string{"a"}})
+		require_NoError(t, err)
+		require_NoError(t, js.DeleteStream("A"))
+	}
+}

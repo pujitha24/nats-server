@@ -434,17 +434,28 @@ func newFileStoreWithCreatedAndMode(fcfg FileStoreConfig, cfg StreamConfig, crea
 	}
 	dios := fcfg.srv.diskIOSemaphore()
 
-	// Check the directory
-	if stat, err := os.Stat(fcfg.StoreDir); os.IsNotExist(err) {
-		if err := os.MkdirAll(fcfg.StoreDir, defaultDirPerms); err != nil {
-			return nil, fmt.Errorf("could not create storage directory - %v", err)
+	// Check the directory. A concurrent cleanup of an emptied parent directory
+	// (see stream.stop) can remove it from under us, so retry on not exist.
+	var tmpfile *os.File
+	for i := 0; ; i++ {
+		if stat, err := os.Stat(fcfg.StoreDir); os.IsNotExist(err) {
+			if err := os.MkdirAll(fcfg.StoreDir, defaultDirPerms); err != nil {
+				if errors.Is(err, os.ErrNotExist) && i < 5 {
+					continue
+				}
+				return nil, fmt.Errorf("could not create storage directory - %v", err)
+			}
+		} else if stat == nil || !stat.IsDir() {
+			return nil, fmt.Errorf("storage directory is not a directory")
 		}
-	} else if stat == nil || !stat.IsDir() {
-		return nil, fmt.Errorf("storage directory is not a directory")
-	}
-	tmpfile, err := os.CreateTemp(fcfg.StoreDir, "_test_")
-	if err != nil {
-		return nil, fmt.Errorf("storage directory is not writable")
+		var err error
+		if tmpfile, err = os.CreateTemp(fcfg.StoreDir, "_test_"); err != nil {
+			if errors.Is(err, os.ErrNotExist) && i < 5 {
+				continue
+			}
+			return nil, fmt.Errorf("storage directory is not writable")
+		}
+		break
 	}
 
 	tmpfile.Close()
